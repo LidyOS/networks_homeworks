@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package notes;
+
+message Note {
+  int64 id = 1;
+  string text = 2;
+  int64 version = 3;
+}
+
+message NoteId { int64 id = 1; }
+message NoteText { string text = 1; }
+message ChangeNote {
+  int64 id = 1;
+  string text = 2;
+  int64 expected_version = 3;
+}
+message DeleteNote {
+  int64 id = 1;
+  int64 expected_version = 2;
+}
+message Empty {}
+message NoteList { repeated Note notes = 1; }
+
+service Notes {
+  rpc Create(NoteText) returns (Note);
+  rpc Get(NoteId) returns (Note);
+  rpc List(Empty) returns (NoteList);
+  rpc Update(ChangeNote) returns (Note);
+  rpc Delete(DeleteNote) returns (Empty);
+}
