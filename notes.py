@@ -3,8 +3,9 @@ import sqlite3
 import xml.etree.ElementTree as ET
 
 
-def etag(note):
-    return f'"note-{note["id"]}-v{note["version"]}"'
+def etag(note, xml=False):
+    variant = "-xml" if xml else ""
+    return f'"note-{note["id"]}-v{note["version"]}{variant}"'
 
 
 class Notes:
@@ -36,7 +37,7 @@ class Notes:
     def list(self):
         return [dict(row) for row in self.db.execute("SELECT id, text, version FROM notes ORDER BY id")]
 
-    def change(self, note_id, text, expected, delete=False):
+    def change(self, note_id, text, expected, delete=False, xml=False):
         if not delete and (not isinstance(text, str) or not text.strip()):
             return "invalid", None
         with self.db:
@@ -45,7 +46,7 @@ class Notes:
             if note is None:
                 return "missing", None
             if isinstance(expected, str):
-                matches = expected.strip() == "*" or etag(note) in (tag.strip() for tag in expected.split(","))
+                matches = expected.strip() == "*" or etag(note, xml) in (tag.strip() for tag in expected.split(","))
             else:
                 matches = expected == note["version"]
             if not matches:
@@ -77,14 +78,14 @@ CHANGE_ERRORS = {
 }
 
 
-def handle_get(store, note_id):
+def handle_get(store, note_id, xml):
     if note_id is None:
         return 200, store.list(), {}
     note = store.get(note_id)
-    return (200, note, {"etag": etag(note)}) if note else (404, {"error": "not found"}, {})
+    return (200, note, {"etag": etag(note, xml)}) if note else (404, {"error": "not found"}, {})
 
 
-def handle_post(store, headers, body):
+def handle_post(store, headers, body, xml):
     try:
         if headers.get("content-type", "").split(";", 1)[0].strip() == "application/xml":
             text = ET.fromstring(body).findtext("text")
@@ -96,10 +97,10 @@ def handle_post(store, headers, body):
         note = store.create(text)
     except ValueError as error:
         return 400, {"error": str(error)}, {}
-    return 201, note, {"etag": etag(note), "location": f'/notes/{note["id"]}'}
+    return 201, note, {"etag": etag(note, xml), "location": f'/notes/{note["id"]}'}
 
 
-def handle_put(store, note_id, headers, body):
+def handle_put(store, note_id, headers, body, xml):
     if "if-match" not in headers:
         return 428, {"error": "If-Match required"}, {}
     try:
@@ -109,17 +110,17 @@ def handle_put(store, note_id, headers, body):
             text = json.loads(body)["text"]
     except (ValueError, KeyError, TypeError, ET.ParseError):
         return 400, {"error": "invalid note body"}, {}
-    result, note = store.change(note_id, text, headers["if-match"])
+    result, note = store.change(note_id, text, headers["if-match"], xml=xml)
     if result != "ok":
         status, message = CHANGE_ERRORS[result]
         return status, {"error": message}, {}
-    return 200, note, {"etag": etag(note)}
+    return 200, note, {"etag": etag(note, xml)}
 
 
-def handle_delete(store, note_id, headers):
+def handle_delete(store, note_id, headers, xml):
     if "if-match" not in headers:
         return 428, {"error": "If-Match required"}, {}
-    result, _ = store.change(note_id, None, headers["if-match"], delete=True)
+    result, _ = store.change(note_id, None, headers["if-match"], delete=True, xml=xml)
     if result != "ok":
         status, message = CHANGE_ERRORS[result]
         return status, {"error": message}, {}
@@ -127,6 +128,7 @@ def handle_delete(store, note_id, headers):
 
 
 def rest(store, method, path, headers, body):
+    xml = "application/xml" in headers.get("accept", "")
     pieces = path.split("?", 1)[0].strip("/").split("/")
     valid = pieces[0] == "notes" and len(pieces) <= 2
     note_id = None
@@ -143,17 +145,16 @@ def rest(store, method, path, headers, body):
     else:
         match method:
             case "GET":
-                status, value, extra = handle_get(store, note_id)
+                status, value, extra = handle_get(store, note_id, xml)
             case "POST" if note_id is None:
-                status, value, extra = handle_post(store, headers, body)
+                status, value, extra = handle_post(store, headers, body, xml)
             case "PUT" if note_id is not None:
-                status, value, extra = handle_put(store, note_id, headers, body)
+                status, value, extra = handle_put(store, note_id, headers, body, xml)
             case "DELETE" if note_id is not None:
-                status, value, extra = handle_delete(store, note_id, headers)
+                status, value, extra = handle_delete(store, note_id, headers, xml)
             case _:
                 status, value, extra = 405, {"error": "method not allowed"}, {"allow": "GET, POST, PUT, DELETE"}
 
-    xml = "application/xml" in headers.get("accept", "")
     payload = b"" if value is None else representation(value, xml)
     fields = {"content-type": "application/xml" if xml else "application/json"} if payload else {}
     fields.update(extra)

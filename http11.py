@@ -20,8 +20,8 @@ async def http11(sock, store):
                     raise BadRequest("invalid header")
                 name, value = field.split(":", 1)
                 key = name.lower()
-                if key in ("content-length", "transfer-encoding") and key in headers:
-                    raise BadRequest("duplicate framing header")
+                if key in ("host", "content-length", "transfer-encoding") and key in headers:
+                    raise BadRequest("duplicate header")
                 headers[key] = value.strip()
             if "host" not in headers:
                 raise BadRequest("Host required")
@@ -72,4 +72,3 @@ async def http11(sock, store):
         await loop.sock_sendall(sock, head.encode("latin-1") + payload)
         if close:
             return
-

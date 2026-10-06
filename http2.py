@@ -83,7 +83,8 @@ class H2:
                 await self.send_body(stream, payload, trailers)
         else:
             status, fields, payload = rest(self.store, headers.get(":method", ""), headers.get(":path", ""), headers, body)
-            fields["content-length"] = str(len(payload))
+            if status != 204:
+                fields["content-length"] = str(len(payload))
             await self.headers(stream, [(":status", str(status))] + list(fields.items()), not payload)
             if payload:
                 await self.send_body(stream, payload)
@@ -102,9 +103,14 @@ async def http2(sock, store, grpc_mode=False):
     if await h2.reader.readexactly(len(H2_PREFACE)) != H2_PREFACE:
         return
     await h2.frame(4, 0, 0)
+    first_frame = True
     try:
         while True:
             kind, flags, stream, payload = await h2.read_frame()
+            if first_frame:
+                if kind != 4 or flags & 1:
+                    raise BadRequest("initial SETTINGS required")
+                first_frame = False
             if kind == 4:
                 if stream != 0 or (flags & 1 and payload) or len(payload) % 6:
                     raise BadRequest("invalid settings")
